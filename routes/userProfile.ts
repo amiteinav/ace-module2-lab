@@ -51,17 +51,23 @@ export function getUserProfile () {
 
     let username = user.username
 
+    const escapeUsername = (name?: string) => {
+      const raw = name ?? ''
+      const escaped = raw.replace(/(?<!\\)([#!]\{)/g, '\\$1')
+      return escaped ? (escaped.startsWith('\\') ? escaped : '\\' + escaped) : ''
+    }
+
     if (username?.match(/#{(.*)}/) !== null && utils.isChallengeEnabled(challenges.usernameXssChallenge)) {
       req.app.locals.abused_ssti_bug = true
       const code = username?.substring(2, username.length - 1)
       try {
-        if (!code) {
-          throw new Error('Username is null')
+        if (!code || /[#!]{/.test(code)) {
+          throw new Error('Unsafe code execution blocked')
         }
         const singleQuoteRegex = /^'(?:[^'\\]|\\.)*'$/
         const doubleQuoteRegex = /^"(?:[^"\\]|\\.)*"$/
         const backtickRegex = /^`(?:[^`\\$]|\\.|\$(?!{))*`$/
-        const numericRegex = /^-?\d+(?:\.\d+)?$/
+        const numericRegex = /^[0-9+\-*/%().\s]+$/
         const booleanRegex = /^(?:true|false|null|undefined)$/
 
         const isSafe = singleQuoteRegex.test(code) ||
@@ -73,12 +79,16 @@ export function getUserProfile () {
         if (!isSafe) {
           throw new Error('Unsafe code execution blocked')
         }
-        username = eval(code) // eslint-disable-line no-eval
+        const evaluated = eval(code) // eslint-disable-line no-eval
+        if (typeof evaluated === 'string' && /[#!]{/.test(evaluated)) {
+          throw new Error('Unsafe code execution blocked')
+        }
+        username = String(evaluated)
       } catch (err) {
-        username = '\\' + username
+        username = escapeUsername(user.username)
       }
     } else {
-      username = '\\' + username
+      username = escapeUsername(user.username)
     }
 
     const themeKey = config.get<string>('application.theme') as keyof typeof themes
